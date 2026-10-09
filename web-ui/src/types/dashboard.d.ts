@@ -5,9 +5,7 @@ export interface DashboardSummary {
   running_tasks: number
   result_files: number
   scanned_items: number
-  recommended_items: number
-  ai_recommended_items: number
-  keyword_recommended_items: number
+  discovered_items: number
   last_updated_at: string | null
 }
 
@@ -22,17 +20,14 @@ export interface DashboardTaskSummary {
   cron: string | null
   region: string | null
   total_items: number
-  recommended_items: number
-  ai_recommended_items: number
-  keyword_recommended_items: number
   latest_crawl_time: string | null
-  latest_recommended_title: string | null
-  latest_recommended_price: number | null
+  latest_item_title: string | null
+  latest_item_price: string | number | null
 }
 
 export interface DashboardActivity {
   id: string
-  type: 'recommendation' | 'scan' | 'task'
+  type: 'scan' | 'task'
   task_name: string
   keyword: string
   title: string

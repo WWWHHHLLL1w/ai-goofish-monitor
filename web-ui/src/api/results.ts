@@ -2,9 +2,6 @@ import type { ResultInsights, ResultItem } from '@/types/result.d.ts'
 import { http } from '@/lib/http'
 
 export interface GetResultContentParams {
-  recommended_only?: boolean;
-  ai_recommended_only?: boolean;
-  keyword_recommended_only?: boolean;
   include_hidden?: boolean;
   sort_by?: 'crawl_time' | 'publish_time' | 'price' | 'keyword_hit_count';
   sort_order?: 'asc' | 'desc';

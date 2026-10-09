@@ -12,7 +12,6 @@ from src.api.routes import (
     tasks,
     logs,
     settings,
-    prompts,
     results,
     login_state,
     websocket,
@@ -21,13 +20,11 @@ from src.api.routes import (
 from src.api.dependencies import (
     set_process_service,
     set_scheduler_service,
-    set_task_generation_service,
 )
 from src.services.task_service import TaskService
 from src.services.process_service import ProcessService
 from src.services.scheduler_service import SchedulerService
 from src.services.task_log_cleanup_service import cleanup_task_logs
-from src.services.task_generation_service import TaskGenerationService
 from src.infrastructure.persistence.sqlite_bootstrap import bootstrap_sqlite_storage
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
 from src.infrastructure.config.settings import settings as app_settings
@@ -36,7 +33,6 @@ from src.infrastructure.config.settings import settings as app_settings
 # 全局服务实例
 process_service = ProcessService()
 scheduler_service = SchedulerService(process_service)
-task_generation_service = TaskGenerationService()
 
 
 async def _sync_task_runtime_status(task_id: int, is_running: bool) -> None:
@@ -59,7 +55,6 @@ process_service.set_lifecycle_hooks(
 # 设置全局 ProcessService 实例供依赖注入使用
 set_process_service(process_service)
 set_scheduler_service(scheduler_service)
-set_task_generation_service(task_generation_service)
 
 
 @asynccontextmanager
@@ -107,7 +102,6 @@ app.include_router(tasks.router)
 app.include_router(dashboard.router)
 app.include_router(logs.router)
 app.include_router(settings.router)
-app.include_router(prompts.router)
 app.include_router(results.router)
 app.include_router(login_state.router)
 app.include_router(websocket.router)

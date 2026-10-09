@@ -377,28 +377,10 @@ def _load_result_summary_sync(filename: str) -> dict | None:
     if not visible_records:
         return None
 
-    recommended_records = [
-        record
-        for record in visible_records
-        if (record.get("ai_analysis", {}) or {}).get("is_recommended") is True
-    ]
-    ai_recommended_items = 0
-    keyword_recommended_items = 0
-    for record in recommended_records:
-        source = (record.get("ai_analysis", {}) or {}).get("analysis_source")
-        if source == "ai":
-            ai_recommended_items += 1
-        elif source == "keyword":
-            keyword_recommended_items += 1
-
     return {
         "total_items": len(visible_records),
-        "recommended_items": len(recommended_records),
-        "ai_recommended_items": ai_recommended_items,
-        "keyword_recommended_items": keyword_recommended_items,
         "latest_crawl_time": visible_records[0].get("爬取时间"),
         "latest_record": visible_records[0],
-        "latest_recommendation": recommended_records[0] if recommended_records else None,
     }
 
 

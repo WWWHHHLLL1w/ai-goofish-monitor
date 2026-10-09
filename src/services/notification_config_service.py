@@ -21,6 +21,7 @@ NOTIFICATION_FIELD_MAP = {
     "TELEGRAM_CHAT_ID": "telegram_chat_id",
     "TELEGRAM_API_BASE_URL": "telegram_api_base_url",
     "WEBHOOK_URL": "webhook_url",
+    "WEBHOOK_SECRET": "webhook_secret",
     "WEBHOOK_METHOD": "webhook_method",
     "WEBHOOK_HEADERS": "webhook_headers",
     "WEBHOOK_CONTENT_TYPE": "webhook_content_type",
@@ -41,6 +42,7 @@ CHANNEL_NOTIFICATION_FIELDS = {
     },
     "webhook": {
         "WEBHOOK_URL",
+        "WEBHOOK_SECRET",
         "WEBHOOK_METHOD",
         "WEBHOOK_HEADERS",
         "WEBHOOK_CONTENT_TYPE",
@@ -56,6 +58,7 @@ SECRET_NOTIFICATION_FIELDS = {
     "TELEGRAM_BOT_TOKEN",
     "WEBHOOK_URL",
     "WEBHOOK_HEADERS",
+    "WEBHOOK_SECRET",
 }
 
 JSON_NOTIFICATION_FIELDS = {
@@ -104,6 +107,7 @@ def build_notification_settings_response(
             or DEFAULT_TELEGRAM_API_BASE_URL
         ),
         "WEBHOOK_URL": "",
+        "WEBHOOK_SECRET": "",
         "WEBHOOK_METHOD": notification_settings.webhook_method,
         "WEBHOOK_HEADERS": "",
         "WEBHOOK_CONTENT_TYPE": notification_settings.webhook_content_type,
@@ -132,6 +136,7 @@ def build_notification_status_flags(
         "telegram_chat_id_set": bool(notification_settings.telegram_chat_id),
         "webhook_url_set": bool(notification_settings.webhook_url),
         "webhook_headers_set": bool(notification_settings.webhook_headers),
+        "webhook_secret_set": bool(notification_settings.webhook_secret),
     }
 
 
@@ -264,6 +269,7 @@ def load_notification_settings() -> NotificationSettings:
                 or DEFAULT_TELEGRAM_API_BASE_URL
             ),
             "webhook_url": _normalize_existing_text(env_manager.get_value("WEBHOOK_URL")),
+            "webhook_secret": _normalize_existing_text(env_manager.get_value("WEBHOOK_SECRET")),
             "webhook_method": _normalize_existing_text(env_manager.get_value("WEBHOOK_METHOD")) or "POST",
             "webhook_headers": _normalize_existing_text(env_manager.get_value("WEBHOOK_HEADERS")),
             "webhook_content_type": _normalize_existing_text(env_manager.get_value("WEBHOOK_CONTENT_TYPE")) or "JSON",
@@ -358,6 +364,7 @@ def _validate_notification_settings(settings: NotificationSettings) -> None:
     has_webhook_extras = any(
         [
             settings.webhook_headers,
+            settings.webhook_secret,
             settings.webhook_query_parameters,
             settings.webhook_body,
         ]

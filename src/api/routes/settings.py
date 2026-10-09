@@ -10,20 +10,7 @@ from pydantic import BaseModel, Field
 
 from src.api.dependencies import get_process_service
 from src.infrastructure.config.env_manager import env_manager
-from src.infrastructure.config.settings import (
-    AISettings,
-    reload_settings,
-    scraper_settings,
-)
-from src.services.ai_request_compat import (
-    CHAT_COMPLETIONS_API_MODE,
-    RESPONSES_API_MODE,
-    build_ai_request_params,
-    create_ai_response_sync,
-    is_chat_completions_api_unsupported_error,
-    is_responses_api_unsupported_error,
-)
-from src.services.ai_response_parser import extract_ai_response_content
+from src.infrastructure.config.settings import reload_settings, scraper_settings
 from src.services.notification_config_service import (
     NotificationSettingsValidationError,
     build_configured_channels,
@@ -39,10 +26,6 @@ from src.services.process_service import ProcessService
 
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-AI_TEST_PROMPT = "Reply with OK only."
-AI_TEST_MAX_OUTPUT_TOKENS = 32
-
-
 def _reload_env() -> None:
     load_dotenv(dotenv_path=env_manager.env_file, override=True)
     reload_settings()
@@ -81,6 +64,7 @@ class NotificationSettingsModel(BaseModel):
     TELEGRAM_CHAT_ID: Optional[str] = None
     TELEGRAM_API_BASE_URL: Optional[str] = None
     WEBHOOK_URL: Optional[str] = None
+    WEBHOOK_SECRET: Optional[str] = None
     WEBHOOK_METHOD: Optional[str] = None
     WEBHOOK_HEADERS: Optional[str] = None
     WEBHOOK_CONTENT_TYPE: Optional[str] = None
@@ -94,16 +78,6 @@ class NotificationTestRequest(BaseModel):
 
     channel: Optional[str] = None
     settings: NotificationSettingsModel = Field(default_factory=NotificationSettingsModel)
-
-
-class AISettingsModel(BaseModel):
-    """AI设置模型"""
-
-    OPENAI_API_KEY: Optional[str] = None
-    OPENAI_BASE_URL: Optional[str] = None
-    OPENAI_MODEL_NAME: Optional[str] = None
-    SKIP_AI_ANALYSIS: Optional[bool] = None
-    PROXY_URL: Optional[str] = None
 
 
 class RotationSettingsModel(BaseModel):
@@ -219,10 +193,6 @@ async def get_system_status(
     state_file = "xianyu_state.json"
     login_state_exists = os.path.exists(state_file)
     env_file_exists = os.path.exists(env_manager.env_file)
-    openai_api_key = env_manager.get_value("OPENAI_API_KEY", "")
-    openai_base_url = env_manager.get_value("OPENAI_BASE_URL", "")
-    openai_model_name = env_manager.get_value("OPENAI_MODEL_NAME", "")
-    ai_settings = AISettings()
     notification_settings = load_notification_settings()
     running_task_ids = [
         task_id
@@ -231,7 +201,6 @@ async def get_system_status(
     ]
 
     return {
-        "ai_configured": ai_settings.is_configured(),
         "notification_configured": notification_settings.has_any_notification_enabled(),
         "headless_mode": scraper_settings.run_headless,
         "running_in_docker": scraper_settings.running_in_docker,
@@ -243,105 +212,7 @@ async def get_system_status(
         },
         "env_file": {
             "exists": env_file_exists,
-            "openai_api_key_set": bool(openai_api_key),
-            "openai_base_url_set": bool(openai_base_url),
-            "openai_model_name_set": bool(openai_model_name),
             **build_notification_status_flags(notification_settings),
         },
         "configured_notification_channels": build_configured_channels(notification_settings),
     }
-
-
-@router.get("/ai")
-async def get_ai_settings():
-    return {
-        "OPENAI_BASE_URL": env_manager.get_value("OPENAI_BASE_URL", ""),
-        "OPENAI_MODEL_NAME": env_manager.get_value("OPENAI_MODEL_NAME", ""),
-        "SKIP_AI_ANALYSIS": env_manager.get_value("SKIP_AI_ANALYSIS", "false").lower() == "true",
-        "PROXY_URL": env_manager.get_value("PROXY_URL", ""),
-    }
-
-
-@router.put("/ai")
-async def update_ai_settings(settings: AISettingsModel):
-    updates = {}
-    if settings.OPENAI_API_KEY is not None:
-        updates["OPENAI_API_KEY"] = settings.OPENAI_API_KEY
-    if settings.OPENAI_BASE_URL is not None:
-        updates["OPENAI_BASE_URL"] = settings.OPENAI_BASE_URL
-    if settings.OPENAI_MODEL_NAME is not None:
-        updates["OPENAI_MODEL_NAME"] = settings.OPENAI_MODEL_NAME
-    if settings.SKIP_AI_ANALYSIS is not None:
-        updates["SKIP_AI_ANALYSIS"] = str(settings.SKIP_AI_ANALYSIS).lower()
-    if settings.PROXY_URL is not None:
-        updates["PROXY_URL"] = settings.PROXY_URL
-
-    success = env_manager.update_values(updates)
-    if not success:
-        raise HTTPException(status_code=500, detail="更新AI设置失败")
-    _reload_env()
-    return {"message": "AI设置已成功更新"}
-
-
-@router.post("/ai/test")
-async def test_ai_settings(settings: dict):
-    """测试AI模型设置是否有效"""
-    try:
-        from openai import OpenAI
-        import httpx
-
-        stored_api_key = env_manager.get_value("OPENAI_API_KEY", "")
-        submitted_api_key = settings.get("OPENAI_API_KEY", "")
-        api_key = submitted_api_key or stored_api_key
-
-        client_params = {
-            "api_key": api_key,
-            "base_url": settings.get("OPENAI_BASE_URL", ""),
-            "timeout": httpx.Timeout(30.0),
-        }
-
-        proxy_url = settings.get("PROXY_URL", "")
-        if proxy_url:
-            client_params["http_client"] = httpx.Client(proxy=proxy_url)
-
-        model_name = settings.get("OPENAI_MODEL_NAME", "")
-        client = OpenAI(**client_params)
-        messages = [{"role": "user", "content": AI_TEST_PROMPT}]
-        api_mode = CHAT_COMPLETIONS_API_MODE
-
-        try:
-            response = create_ai_response_sync(
-                client,
-                api_mode,
-                build_ai_request_params(
-                    api_mode,
-                    model=model_name,
-                    messages=messages,
-                    max_output_tokens=AI_TEST_MAX_OUTPUT_TOKENS,
-                ),
-            )
-        except Exception as exc:
-            if not is_chat_completions_api_unsupported_error(exc):
-                raise
-            api_mode = RESPONSES_API_MODE
-            response = create_ai_response_sync(
-                client,
-                api_mode,
-                build_ai_request_params(
-                    api_mode,
-                    model=model_name,
-                    messages=messages,
-                    max_output_tokens=AI_TEST_MAX_OUTPUT_TOKENS,
-                ),
-            )
-
-        return {
-            "success": True,
-            "message": "AI模型连接测试成功！",
-            "response": extract_ai_response_content(response),
-        }
-    except Exception as exc:
-        return {
-            "success": False,
-            "message": f"AI模型连接测试失败: {exc}",
-        }

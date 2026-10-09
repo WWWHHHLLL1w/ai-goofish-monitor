@@ -16,11 +16,11 @@ from src.infrastructure.persistence.sqlite_connection import sqlite_connection
 def _row_to_task(row) -> Task:
     payload = dict(row)
     payload["enabled"] = bool(payload["enabled"])
-    payload["analyze_images"] = bool(payload["analyze_images"])
     payload["personal_only"] = bool(payload["personal_only"])
     payload["free_shipping"] = bool(payload["free_shipping"])
     payload["is_running"] = bool(payload["is_running"])
-    payload["keyword_rules"] = json.loads(payload.pop("keyword_rules_json") or "[]")
+    payload["description"] = payload.get("description") or ""
+    payload["account_strategy"] = payload.get("account_strategy") or "auto"
     return Task(**payload)
 
 
@@ -112,21 +112,60 @@ class SqliteTaskRepository(TaskRepository):
             legacy_config_file=self.legacy_config_file,
         )
         with sqlite_connection(self.db_path) as conn:
-            cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            task_row = conn.execute(
+                "SELECT task_name, keyword FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            cursor = conn.execute(
+                "DELETE FROM tasks WHERE id = ?",
+                (task_id,),
+            )
+            if cursor.rowcount:
+                task_keys = {str(task_id)}
+                if task_row is not None:
+                    task_keys.update(
+                        {
+                            f"{task_id}::{task_row['keyword']}",
+                            f"{task_row['task_name']}::{task_row['keyword']}",
+                        }
+                    )
+                for task_key in task_keys:
+                    conn.execute(
+                        "DELETE FROM latest_item_notifications WHERE task_key = ?",
+                        (task_key,),
+                    )
+                    conn.execute(
+                        "DELETE FROM latest_item_notification_state WHERE task_key = ?",
+                        (task_key,),
+                    )
             conn.commit()
         return cursor.rowcount > 0
 
     def _next_task_id(self, conn) -> int:
         row = conn.execute("SELECT COALESCE(MAX(id), -1) AS max_id FROM tasks").fetchone()
-        return int(row["max_id"]) + 1
+        max_task_id = int(row["max_id"])
+        sequence_row = conn.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'task_id_sequence'"
+        ).fetchone()
+        last_allocated_id = int(sequence_row["seq"]) if sequence_row else -1
+        next_task_id = max(max_task_id, last_allocated_id) + 1
+        conn.execute("INSERT INTO task_id_sequence (id) VALUES (?)", (next_task_id,))
+        return next_task_id
 
     def _task_values(self, task: Task) -> dict:
         values = task.model_dump()
+        values.update(
+            {
+                "description": "",
+                "analyze_images": 0,
+                "ai_prompt_base_file": "",
+                "ai_prompt_criteria_file": "",
+                "decision_mode": "notify",
+                "keyword_rules_json": "[]",
+            }
+        )
         values["enabled"] = int(task.enabled)
-        values["analyze_images"] = int(task.analyze_images)
         values["personal_only"] = int(task.personal_only)
         values["free_shipping"] = int(task.free_shipping)
         values["is_running"] = int(task.is_running)
-        values["keyword_rules_json"] = json.dumps(task.keyword_rules or [], ensure_ascii=False)
-        values.pop("keyword_rules", None)
         return values

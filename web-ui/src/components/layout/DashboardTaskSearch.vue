@@ -47,7 +47,6 @@ function matchesTask(task: Task, value: string) {
   const fields = [
     task.task_name,
     task.keyword,
-    task.description || '',
     task.region || '',
   ]
   return fields.some((field) => field.toLowerCase().includes(value))
@@ -243,13 +242,6 @@ onBeforeUnmount(() => {
                 :class="index === highlightedIndex ? 'text-white/70' : 'text-slate-500'"
               >
                 {{ getTaskMeta(task) }}
-              </p>
-              <p
-                v-if="task.description"
-                class="mt-1 truncate text-xs"
-                :class="index === highlightedIndex ? 'text-white/70' : 'text-slate-400'"
-              >
-                {{ task.description }}
               </p>
             </div>
           </button>

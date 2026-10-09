@@ -97,6 +97,31 @@ SCHEMA_STATEMENTS = (
         updated_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS latest_item_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_key TEXT NOT NULL,
+        item_key TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(task_key, item_key)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS latest_item_notification_state (
+        task_key TEXT PRIMARY KEY,
+        baseline_complete INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE TABLE IF NOT EXISTS task_id_sequence (id INTEGER PRIMARY KEY AUTOINCREMENT)",
+    "CREATE INDEX IF NOT EXISTS idx_latest_notifications_pending "
+    "ON latest_item_notifications(task_key, status, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_tasks_name ON tasks(task_name)",
     """
     CREATE INDEX IF NOT EXISTS idx_results_filename_crawl

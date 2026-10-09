@@ -143,8 +143,6 @@ async function handleSaveBlacklistRules() {
       :file-options="fileOptions"
       :is-ready="isFileOptionsReady"
       v-model:selectedFile="selectedFile"
-      v-model:aiRecommendedOnly="filters.ai_recommended_only"
-      v-model:keywordRecommendedOnly="filters.keyword_recommended_only"
       v-model:includeHidden="filters.include_hidden"
       v-model:sortBy="filters.sort_by"
       v-model:sortOrder="filters.sort_order"

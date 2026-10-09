@@ -5,21 +5,25 @@
 
 import asyncio
 import contextlib
+import logging
 import os
 import signal
 import sys
 from datetime import datetime
 from typing import Awaitable, Callable, Dict, TextIO
 
-from src.ai_handler import send_ntfy_notification
+from src.services.notification_facade import send_notification
 from src.config import STATE_FILE
 from src.failure_guard import FailureGuard
+from src.infrastructure.config.env_manager import env_manager
 from src.infrastructure.persistence.sqlite_task_repository import find_task_by_name_sync
 from src.utils import build_task_log_path
 
 STOP_TIMEOUT_SECONDS = 20
 SPIDER_DEBUG_LIMIT_ENV = "SPIDER_DEBUG_LIMIT"
 LifecycleHook = Callable[[int], Awaitable[None] | None]
+PROCESS_LOGGER = logging.getLogger("uvicorn.error")
+UVICORN_LOGGER = logging.getLogger("uvicorn")
 
 
 class ProcessService:
@@ -31,6 +35,7 @@ class ProcessService:
         self.log_handles: Dict[int, TextIO] = {}
         self.task_names: Dict[int, str] = {}
         self.exit_watchers: Dict[int, asyncio.Task] = {}
+        self.output_watchers: Dict[int, asyncio.Task] = {}
         self.failure_guard = FailureGuard()
         self._on_started: LifecycleHook | None = None
         self._on_stopped: LifecycleHook | None = None
@@ -99,22 +104,78 @@ class ProcessService:
             command.extend(["--debug-limit", debug_limit])
         return command
 
+    def _build_child_env(self) -> dict[str, str]:
+        """构建任务子进程环境，并同步当前 .env 配置。"""
+        child_env = os.environ.copy()
+        try:
+            # 后端进程可能早于 .env 修改启动；任务进程应使用当前文件配置，
+            # 否则 PyCharm 中继承的旧 RUN_HEADLESS 会覆盖 .env 的值。
+            child_env.update(env_manager.read_env())
+        except Exception as exc:
+            print(f"读取 .env 配置失败，将使用当前进程环境启动任务: {exc}")
+        child_env["PYTHONIOENCODING"] = "utf-8"
+        child_env["PYTHONUTF8"] = "1"
+        return child_env
+
     async def _spawn_process(
         self,
         task_name: str,
-        log_file_handle: TextIO,
     ) -> asyncio.subprocess.Process:
         preexec_fn = os.setsid if sys.platform != "win32" else None
-        child_env = os.environ.copy()
-        child_env["PYTHONIOENCODING"] = "utf-8"
-        child_env["PYTHONUTF8"] = "1"
         return await asyncio.create_subprocess_exec(
             *self._build_spawn_command(task_name),
-            stdout=log_file_handle,
-            stderr=log_file_handle,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
             preexec_fn=preexec_fn,
-            env=child_env,
+            env=self._build_child_env(),
         )
+
+    async def _forward_process_output(
+        self,
+        task_id: int,
+        process: asyncio.subprocess.Process,
+        log_file_handle: TextIO,
+    ) -> None:
+        """同时将爬虫子进程输出写入日志文件和当前控制台。"""
+        output_stream = getattr(process, "stdout", None)
+        if output_stream is None:
+            return
+
+        task_name = self.task_names.get(task_id, f"task-{task_id}")
+        prefix = f"[爬虫:{task_name}] "
+
+        try:
+            while True:
+                raw_line = await output_stream.readline()
+                if not raw_line:
+                    break
+
+                if isinstance(raw_line, bytes):
+                    line = raw_line.decode("utf-8", errors="replace")
+                else:
+                    line = str(raw_line)
+
+                log_file_handle.write(line)
+                log_file_handle.flush()
+
+                try:
+                    console_lines = line.splitlines(keepends=True) or [line]
+                    for console_line in console_lines:
+                        message = prefix + console_line.rstrip("\r\n")
+                        if PROCESS_LOGGER.handlers or UVICORN_LOGGER.handlers:
+                            # Uvicorn's handler is captured by PyCharm's Console.
+                            PROCESS_LOGGER.info("%s", message)
+                        else:
+                            sys.stdout.write(prefix + console_line)
+                    if not (PROCESS_LOGGER.handlers or UVICORN_LOGGER.handlers):
+                        sys.stdout.flush()
+                except (AttributeError, OSError, ValueError):
+                    # 控制台关闭或被调试器替换时，不能影响文件日志继续写入。
+                    pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"转发任务 '{task_name}' 日志失败: {exc}")
 
     def _register_runtime(
         self,
@@ -128,6 +189,9 @@ class ProcessService:
         self.log_paths[task_id] = log_file_path
         self.log_handles[task_id] = log_file_handle
         self.task_names[task_id] = task_name
+        self.output_watchers[task_id] = asyncio.create_task(
+            self._forward_process_output(task_id, process, log_file_handle)
+        )
         self.exit_watchers[task_id] = asyncio.create_task(self._watch_process_exit(process))
 
     async def start_task(self, task_id: int, task_name: str) -> bool:
@@ -149,7 +213,7 @@ class ProcessService:
         log_file_handle = None
         try:
             log_file_path, log_file_handle = self._open_log_file(task_id, task_name)
-            process = await self._spawn_process(task_name, log_file_handle)
+            process = await self._spawn_process(task_name)
         except Exception as exc:
             self._close_log_handle(log_file_handle)
             print(f"启动任务 '{task_name}' 失败: {exc}")
@@ -168,7 +232,7 @@ class ProcessService:
         if not decision.should_notify:
             return
         try:
-            await send_ntfy_notification(
+            await send_notification(
                 {
                     "商品标题": f"[任务暂停] {task_name}",
                     "当前售价": "N/A",
@@ -188,6 +252,12 @@ class ProcessService:
         task_id = self._find_task_id_by_process(process)
         if task_id is None:
             return
+
+        output_watcher = self.output_watchers.get(task_id)
+        if output_watcher is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.shield(output_watcher)
+
         self._cleanup_runtime(task_id, process)
         await self._invoke_hook(self._on_stopped, task_id)
 
@@ -207,6 +277,7 @@ class ProcessService:
         self.processes.pop(task_id, None)
         self.log_paths.pop(task_id, None)
         self.task_names.pop(task_id, None)
+        self.output_watchers.pop(task_id, None)
         self._close_log_handle(self.log_handles.pop(task_id, None))
         self.exit_watchers.pop(task_id, None)
 
@@ -289,6 +360,7 @@ class ProcessService:
         self.log_paths = self._reindex_mapping(self.log_paths, deleted_task_id)
         self.log_handles = self._reindex_mapping(self.log_handles, deleted_task_id)
         self.task_names = self._reindex_mapping(self.task_names, deleted_task_id)
+        self.output_watchers = self._reindex_mapping(self.output_watchers, deleted_task_id)
         self.exit_watchers = self._reindex_mapping(self.exit_watchers, deleted_task_id)
 
     def _reindex_mapping(self, mapping: Dict[int, object], deleted_task_id: int) -> Dict[int, object]:

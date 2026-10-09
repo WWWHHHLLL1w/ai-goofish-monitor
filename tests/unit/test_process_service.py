@@ -26,6 +26,17 @@ class FakeProcess:
         self.finish(-9)
 
 
+class FakeOutputStream:
+    def __init__(self, lines):
+        self.lines = iter(lines)
+
+    async def readline(self):
+        try:
+            return next(self.lines)
+        except StopIteration:
+            return b""
+
+
 def test_process_service_marks_task_stopped_when_process_exits(monkeypatch, tmp_path):
     fake_process = FakeProcess(pid=4321)
     events = []
@@ -84,6 +95,9 @@ def test_process_service_reindexes_runtime_maps_after_delete():
     service.processes = {0: proc_a, 2: proc_c}
     service.log_paths = {0: "a.log", 2: "c.log"}
     service.task_names = {0: "A", 2: "C"}
+    watcher_output_a = object()
+    watcher_output_c = object()
+    service.output_watchers = {0: watcher_output_a, 2: watcher_output_c}
     service.exit_watchers = {0: watcher_a, 2: watcher_c}
 
     service.reindex_after_delete(1)
@@ -91,7 +105,27 @@ def test_process_service_reindexes_runtime_maps_after_delete():
     assert service.processes == {0: proc_a, 1: proc_c}
     assert service.log_paths == {0: "a.log", 1: "c.log"}
     assert service.task_names == {0: "A", 1: "C"}
+    assert service.output_watchers == {0: watcher_output_a, 1: watcher_output_c}
     assert service.exit_watchers == {0: watcher_a, 1: watcher_c}
+
+
+def test_process_service_forwards_child_output_to_log_and_console(capsys, tmp_path):
+    async def run_scenario():
+        service = ProcessService()
+        service.task_names[0] = "task-a"
+        process = SimpleNamespace(
+            stdout=FakeOutputStream([b"first line\n", "中文日志\n"]),
+        )
+        log_path = tmp_path / "task-a.log"
+        with log_path.open("w", encoding="utf-8") as log_handle:
+            await service._forward_process_output(0, process, log_handle)
+
+        assert log_path.read_text(encoding="utf-8") == "first line\n中文日志\n"
+
+    asyncio.run(run_scenario())
+    captured = capsys.readouterr()
+    assert "[爬虫:task-a] first line\n" in captured.out
+    assert "[爬虫:task-a] 中文日志\n" in captured.out
 
 
 def test_process_service_adds_debug_limit_arg_when_env_enabled(monkeypatch):
@@ -109,3 +143,18 @@ def test_process_service_adds_debug_limit_arg_when_env_enabled(monkeypatch):
         "--debug-limit",
         "1",
     ]
+
+
+def test_process_service_syncs_dotenv_to_child_environment(monkeypatch):
+    service = ProcessService()
+    monkeypatch.setenv("RUN_HEADLESS", "true")
+    monkeypatch.setattr(
+        "src.services.process_service.env_manager.read_env",
+        lambda: {"RUN_HEADLESS": "false", "LOGIN_IS_EDGE": "false"},
+    )
+
+    child_env = service._build_child_env()
+
+    assert child_env["RUN_HEADLESS"] == "false"
+    assert child_env["LOGIN_IS_EDGE"] == "false"
+    assert child_env["PYTHONUTF8"] == "1"
