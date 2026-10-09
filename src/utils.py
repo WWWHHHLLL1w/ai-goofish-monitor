@@ -1,6 +1,5 @@
 import asyncio
 import json
-import math
 import os
 import random
 import re
@@ -8,12 +7,6 @@ import glob
 from datetime import datetime
 from functools import wraps
 from urllib.parse import quote
-
-from openai import APIStatusError
-from requests.exceptions import HTTPError
-
-from src.services.result_storage_service import save_result_record
-
 
 def retry_on_failure(retries=3, delay=5):
     """
@@ -25,14 +18,6 @@ def retry_on_failure(retries=3, delay=5):
             for i in range(retries):
                 try:
                     return await func(*args, **kwargs)
-                except (APIStatusError, HTTPError) as e:
-                    print(f"函数 {func.__name__} 第 {i + 1}/{retries} 次尝试失败，发生HTTP错误。")
-                    if hasattr(e, 'status_code'):
-                        print(f"  - 状态码 (Status Code): {e.status_code}")
-                    if hasattr(e, 'response') and hasattr(e.response, 'text'):
-                        response_text = e.response.text
-                        print(
-                            f"  - 返回值 (Response): {response_text[:300]}{'...' if len(response_text) > 300 else ''}")
                 except json.JSONDecodeError as e:
                     print(f"函数 {func.__name__} 第 {i + 1}/{retries} 次尝试失败: JSON解析错误 - {e}")
                 except Exception as e:
@@ -117,40 +102,3 @@ def convert_goofish_link(url: str) -> str:
 def get_link_unique_key(link: str) -> str:
     """截取链接中第一个"&"之前的内容作为唯一标识依据。"""
     return link.split('&', 1)[0]
-
-
-async def save_to_jsonl(data_record: dict, keyword: str):
-    """兼容旧调用名，实际将结果写入 SQLite。"""
-    try:
-        return await save_result_record(data_record, keyword)
-    except Exception as e:
-        print(f"写入 SQLite 结果记录出错: {e}")
-        return False
-
-
-def format_registration_days(total_days: int) -> str:
-    """
-    将总天数格式化为“X年Y个月”的字符串。
-    """
-    if not isinstance(total_days, int) or total_days <= 0:
-        return '未知'
-
-    DAYS_IN_YEAR = 365.25
-    DAYS_IN_MONTH = DAYS_IN_YEAR / 12
-
-    years = math.floor(total_days / DAYS_IN_YEAR)
-    remaining_days = total_days - (years * DAYS_IN_YEAR)
-    months = round(remaining_days / DAYS_IN_MONTH)
-
-    if months == 12:
-        years += 1
-        months = 0
-
-    if years > 0 and months > 0:
-        return f"来闲鱼{years}年{months}个月"
-    elif years > 0 and months == 0:
-        return f"来闲鱼{years}年整"
-    elif years == 0 and months > 0:
-        return f"来闲鱼{months}个月"
-    else:
-        return "来闲鱼不足一个月"

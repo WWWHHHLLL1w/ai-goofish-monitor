@@ -1,10 +1,5 @@
 import { ref, onMounted } from 'vue'
-import type {
-  Task,
-  TaskCreateResponse,
-  TaskGenerateRequest,
-  TaskUpdate,
-} from '@/types/task.d.ts'
+import type { Task, TaskCreate, TaskUpdate } from '@/types/task.d.ts'
 import * as taskApi from '@/api/tasks'
 import { useWebSocket } from '@/composables/useWebSocket'
 
@@ -47,11 +42,13 @@ export function useTasks() {
     fetchTasks({ silent: true })
   })
 
-  async function createTask(data: TaskGenerateRequest): Promise<TaskCreateResponse> {
+  async function createTask(data: TaskCreate): Promise<Task> {
     isLoading.value = true
     error.value = null
     try {
-      return await taskApi.createTaskWithAI(data)
+      const created = await taskApi.createTask(data)
+      await fetchTasks({ silent: true })
+      return created
     } catch (e) {
       if (e instanceof Error) {
         error.value = e

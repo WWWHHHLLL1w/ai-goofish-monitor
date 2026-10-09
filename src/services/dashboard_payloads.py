@@ -46,12 +46,10 @@ def build_empty_summary(task: Task) -> dict[str, Any]:
         "cron": task.cron,
         "region": task.region,
         "total_items": 0,
-        "recommended_items": 0,
-        "ai_recommended_items": 0,
-        "keyword_recommended_items": 0,
+        "discovered_items": 0,
         "latest_crawl_time": None,
-        "latest_recommended_title": None,
-        "latest_recommended_price": None,
+        "latest_item_title": None,
+        "latest_item_price": None,
     }
 
 
@@ -102,12 +100,10 @@ def _build_fallback_summary(task_name: str, keyword: str) -> dict[str, Any]:
         "cron": None,
         "region": None,
         "total_items": 0,
-        "recommended_items": 0,
-        "ai_recommended_items": 0,
-        "keyword_recommended_items": 0,
+        "discovered_items": 0,
         "latest_crawl_time": None,
-        "latest_recommended_title": None,
-        "latest_recommended_price": None,
+        "latest_item_title": None,
+        "latest_item_price": None,
     }
 
 
@@ -129,10 +125,6 @@ def _resolve_task(
 def _collect_record_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     latest_crawl_time: datetime | None = None
     latest_record: dict[str, Any] | None = None
-    latest_recommendation: dict[str, Any] | None = None
-    recommended_items = 0
-    ai_recommended_items = 0
-    keyword_recommended_items = 0
 
     for record in records:
         crawl_time = parse_timestamp(record.get("爬取时间"))
@@ -140,63 +132,10 @@ def _collect_record_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
             latest_crawl_time = crawl_time
             latest_record = record
 
-        analysis = record.get("ai_analysis", {}) or {}
-        if analysis.get("is_recommended") is not True:
-            continue
-
-        recommended_items += 1
-        source = analysis.get("analysis_source")
-        if source == "ai":
-            ai_recommended_items += 1
-        elif source == "keyword":
-            keyword_recommended_items += 1
-
-        recommendation_time = parse_timestamp(
-            latest_recommendation.get("爬取时间") if latest_recommendation else None
-        )
-        if latest_recommendation is None or (crawl_time and recommendation_time and crawl_time > recommendation_time):
-            latest_recommendation = record
-        elif latest_recommendation is None and crawl_time:
-            latest_recommendation = record
-
     return {
         "latest_crawl_time": latest_crawl_time,
         "latest_record": latest_record,
-        "latest_recommendation": latest_recommendation,
-        "recommended_items": recommended_items,
-        "ai_recommended_items": ai_recommended_items,
-        "keyword_recommended_items": keyword_recommended_items,
     }
-
-
-def _build_recommendation_activity(
-    *,
-    filename: str,
-    task_name: str,
-    keyword: str,
-    latest_recommendation: dict[str, Any] | None,
-) -> tuple[dict[str, Any] | None, str | None, float | None]:
-    if not latest_recommendation:
-        return None, None, None
-
-    product = latest_recommendation.get("商品信息", {}) or {}
-    analysis = latest_recommendation.get("ai_analysis", {}) or {}
-    title = str(product.get("商品标题") or "发现推荐商品")
-    price = parse_price_value(product.get("当前售价"))
-    status = "AI 推荐" if analysis.get("analysis_source") == "ai" else "关键词命中"
-    detail = f"当前价 ¥{price:.0f}" if isinstance(price, (int, float)) else None
-    activity = build_activity(
-        activity_id=f"{filename}:recommended",
-        activity_type="recommendation",
-        task_name=task_name,
-        keyword=keyword,
-        title=title,
-        status=status,
-        timestamp=parse_timestamp(latest_recommendation.get("爬取时间")),
-        detail=detail,
-        filename=filename,
-    )
-    return activity, title, price
 
 
 def _build_scan_activity(
@@ -217,7 +156,7 @@ def _build_scan_activity(
         task_name=task_name,
         keyword=keyword,
         title=title,
-        status="结果已更新",
+        status="历史结果已更新",
         timestamp=parse_timestamp(latest_record.get("爬取时间")),
         detail=f"已累计 {total_items} 条样本",
         filename=filename,
@@ -240,15 +179,6 @@ async def summarize_result_file(
     summary = build_empty_summary(task) if task else _build_fallback_summary(task_name, keyword)
 
     activities: list[dict[str, Any]] = []
-    recommendation, title, price = _build_recommendation_activity(
-        filename=filename,
-        task_name=task_name,
-        keyword=keyword,
-        latest_recommendation=metrics["latest_recommendation"],
-    )
-    if recommendation:
-        activities.append(recommendation)
-
     scan_activity = _build_scan_activity(
         filename=filename,
         task_name=task_name,
@@ -259,16 +189,14 @@ async def summarize_result_file(
     if scan_activity:
         activities.append(scan_activity)
 
+    latest_product = (latest_record or {}).get("商品信息", {}) or {}
     summary.update(
         {
             "filename": filename,
             "total_items": metrics["total_items"],
-            "recommended_items": metrics["recommended_items"],
-            "ai_recommended_items": metrics["ai_recommended_items"],
-            "keyword_recommended_items": metrics["keyword_recommended_items"],
             "latest_crawl_time": serialize_timestamp(latest_crawl_time),
-            "latest_recommended_title": title,
-            "latest_recommended_price": price,
+            "latest_item_title": latest_product.get("商品标题"),
+            "latest_item_price": parse_price_value(latest_product.get("当前售价")),
         }
     )
     return summary, activities, latest_crawl_time

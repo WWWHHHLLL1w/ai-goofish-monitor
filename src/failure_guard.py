@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -88,26 +89,71 @@ def _cookie_changed(
 
 
 class _FileLock:
-    def __init__(self, fh):
-        self._fh = fh
+    """Cross-process lock backed by a sibling lock file."""
+
+    def __init__(self, path: str):
+        self._lock_path = f"{path}.lock"
+        self._fh = None
+        self._locked = False
 
     def __enter__(self):
+        _ensure_parent_dir(self._lock_path)
+        self._fh = open(self._lock_path, "a+b")
         try:
-            import fcntl
+            if os.name == "nt":
+                self._acquire_windows_lock()
+            else:
+                import fcntl
 
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+            self._locked = True
         except Exception:
-            pass
+            self._fh.close()
+            self._fh = None
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        try:
-            import fcntl
+        if self._fh is None:
+            return False
 
-            fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
+        try:
+            if self._locked:
+                if os.name == "nt":
+                    self._release_windows_lock()
+                else:
+                    import fcntl
+
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._fh.close()
+            self._fh = None
+            self._locked = False
         return False
+
+    def _acquire_windows_lock(self) -> None:
+        import msvcrt
+
+        self._fh.seek(0, os.SEEK_END)
+        if self._fh.tell() == 0:
+            self._fh.write(b"0")
+            self._fh.flush()
+        self._fh.seek(0)
+
+        # LK_NBLCK lets us wait in short intervals instead of blocking the
+        # event loop for msvcrt's built-in retry window.
+        while True:
+            try:
+                msvcrt.locking(self._fh.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                time.sleep(0.05)
+
+    def _release_windows_lock(self) -> None:
+        import msvcrt
+
+        self._fh.seek(0)
+        msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def _ensure_parent_dir(path: str) -> None:
@@ -135,12 +181,24 @@ def _read_json_file(path: str) -> dict:
 
 def _atomic_write_json(path: str, data: dict) -> None:
     _ensure_parent_dir(path)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    parent = os.path.dirname(path) or "."
+    prefix = f".{os.path.basename(path)}."
+    fd, tmp = tempfile.mkstemp(prefix=prefix, suffix=".tmp", dir=parent)
+    open_fd = fd
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            open_fd = None
+            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if open_fd is not None:
+            os.close(open_fd)
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
 
 
 @dataclass(frozen=True)
@@ -188,18 +246,16 @@ class FailureGuard:
 
     def _update_task(self, task_key: str, updater) -> dict:
         _ensure_parent_dir(self.path)
-        with open(self.path, "a+", encoding="utf-8") as fh:
-            with _FileLock(fh):
-                fh.seek(0)
-                data = self._load()
-                tasks = data.setdefault("tasks", {})
-                entry = tasks.get(task_key) or {}
-                if not isinstance(entry, dict):
-                    entry = {}
-                entry = updater(entry) or entry
-                tasks[task_key] = entry
-                self._save(data)
-                return entry
+        with _FileLock(self.path):
+            data = self._load()
+            tasks = data.setdefault("tasks", {})
+            entry = tasks.get(task_key) or {}
+            if not isinstance(entry, dict):
+                entry = {}
+            entry = updater(entry) or entry
+            tasks[task_key] = entry
+            self._save(data)
+            return entry
 
     def record_success(self, task_key: str, *, now: Optional[datetime] = None) -> None:
         def _reset(_: dict) -> dict:

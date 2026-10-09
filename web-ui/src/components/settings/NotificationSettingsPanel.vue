@@ -37,14 +37,14 @@ const mutableInitialValues = initialValues as Record<string, string | boolean | 
 const mutableForm = form as Record<string, string | boolean | null | undefined>
 const mutableClearedFields = clearedFields as Record<string, boolean>
 
-const secretFields = ['BARK_URL', 'GOTIFY_TOKEN', 'WX_BOT_URL', 'TELEGRAM_BOT_TOKEN', 'WEBHOOK_URL', 'WEBHOOK_HEADERS'] as const
+const secretFields = ['BARK_URL', 'GOTIFY_TOKEN', 'WX_BOT_URL', 'TELEGRAM_BOT_TOKEN', 'WEBHOOK_URL', 'WEBHOOK_SECRET', 'WEBHOOK_HEADERS'] as const
 const channelFields: Record<ChannelKey, (keyof NotificationSettingsUpdate)[]> = {
   ntfy: ['NTFY_TOPIC_URL'],
   bark: ['BARK_URL'],
   gotify: ['GOTIFY_URL', 'GOTIFY_TOKEN'],
   wecom: ['WX_BOT_URL'],
   telegram: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'TELEGRAM_API_BASE_URL'],
-  webhook: ['WEBHOOK_URL', 'WEBHOOK_METHOD', 'WEBHOOK_CONTENT_TYPE', 'WEBHOOK_HEADERS', 'WEBHOOK_QUERY_PARAMETERS', 'WEBHOOK_BODY'],
+  webhook: ['WEBHOOK_URL', 'WEBHOOK_SECRET', 'WEBHOOK_METHOD', 'WEBHOOK_CONTENT_TYPE', 'WEBHOOK_HEADERS', 'WEBHOOK_QUERY_PARAMETERS', 'WEBHOOK_BODY'],
 }
 
 function syncFromSettings(settings: NotificationSettings) {
@@ -64,6 +64,7 @@ function syncFromSettings(settings: NotificationSettings) {
     WX_BOT_URL: '',
     TELEGRAM_BOT_TOKEN: '',
     WEBHOOK_URL: '',
+    WEBHOOK_SECRET: '',
     WEBHOOK_HEADERS: '',
   })
 
@@ -72,6 +73,7 @@ function syncFromSettings(settings: NotificationSettings) {
   secretConfigured.WX_BOT_URL = !!settings.WX_BOT_URL_SET
   secretConfigured.TELEGRAM_BOT_TOKEN = !!settings.TELEGRAM_BOT_TOKEN_SET
   secretConfigured.WEBHOOK_URL = !!settings.WEBHOOK_URL_SET
+  secretConfigured.WEBHOOK_SECRET = !!settings.WEBHOOK_SECRET_SET
   secretConfigured.WEBHOOK_HEADERS = !!settings.WEBHOOK_HEADERS_SET
 
   for (const field of Object.keys(clearedFields)) {
@@ -281,8 +283,9 @@ function resolveChannelBadge(channel: ChannelKey) {
       <Card class="app-surface-subtle overflow-hidden border-l-4 border-l-rose-500">
         <CardHeader><CardTitle class="flex items-center gap-2"><Webhook class="h-4 w-4 text-rose-500" /> {{ t('notifyPanel.webhook.title') }}</CardTitle><CardDescription>{{ t('notifyPanel.webhook.description') }}</CardDescription></CardHeader>
         <CardContent class="grid gap-4">
-          <div class="grid gap-4 md:grid-cols-2">
+          <div class="grid gap-4 md:grid-cols-3">
             <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.urlLabel') }}</Label><Input :model-value="form.WEBHOOK_URL ?? ''" :placeholder="t('notifyPanel.secretPlaceholder')" @update:model-value="(value) => updateSecretField('WEBHOOK_URL', String(value))" /></div>
+            <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.secretLabel') }}</Label><Input type="password" :model-value="form.WEBHOOK_SECRET ?? ''" :placeholder="t('notifyPanel.secretKeepPlaceholder')" @update:model-value="(value) => updateSecretField('WEBHOOK_SECRET', String(value))" /><p class="text-xs text-slate-500">{{ secretConfigured.WEBHOOK_SECRET ? t('notifyPanel.webhook.secretConfiguredHint') : t('notifyPanel.notConfigured') }}</p></div>
             <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.headersLabel') }}</Label><Textarea :model-value="form.WEBHOOK_HEADERS ?? ''" :placeholder="webhookHeadersPlaceholder" @update:model-value="(value) => updateSecretField('WEBHOOK_HEADERS', String(value))" /></div>
           </div>
           <div class="grid gap-4 md:grid-cols-2">

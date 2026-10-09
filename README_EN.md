@@ -1,20 +1,17 @@
-# Xianyu Intelligent Monitor Bot
+# Xianyu New-Item Monitor
 
 [中文](README.md) ｜ [English]
 
-A Playwright and AI-powered multi-task real-time monitoring tool for Xianyu (闲鱼), featuring a complete web management interface.
+A lightweight Playwright monitor for scheduled Xianyu (闲鱼) searches. Configure search filters in the Web UI and receive notifications for matching items first discovered by each task.
 
 ## Core Features
 
-- **Web Visual Management**: Task management, account management, AI criteria editing, run logs, results browsing
-- **AI-Driven**: Natural language task creation, multimodal model for in-depth product analysis
-- **Multi-Task Concurrency**: Independent configuration for keywords, prices, filters, and AI prompts
-- **SQLite as Primary Storage**: Tasks, results, and price history are persisted in one embedded database instead of repeatedly scanning `jsonl`
-- **Advanced Filtering**: Free shipping, new listing time range, province/city/district filtering
-- **Instant Notifications**: Supports ntfy.sh, WeChat Work (企业微信), Bark, Telegram, Webhook
-- **Scheduled Tasks**: Cron expression configuration for periodic tasks
-- **Account & Proxy Rotation**: Multi-account management, task-account binding, proxy pool rotation with failure retry
-- **Docker Deployment**: One-click containerized deployment
+- **Scheduled search**: Configure keywords, optional publish-time filter (choose `Latest` to prioritize newest listings), price, region, personal listings, shipping, page count, and Cron schedule.
+- **New-item notifications**: The first complete scan establishes a baseline without sending existing listings; later scans notify newly discovered matching items.
+- **Persistent deduplication and retry**: SQLite keeps task/item keys and pending notifications across restarts; failed sends remain retryable.
+- **Operations and risk controls**: Manage login states, account/proxy rotation, failure guard, process logs, and graceful task shutdown.
+- **Multiple notification channels**: ntfy.sh, WeChat Work (企业微信), Bark, Telegram, Gotify, and Webhook.
+- **Web management and Docker deployment**: Configure tasks, schedules, accounts, notifications, and system status in the UI.
 
 ## Screenshots
 
@@ -42,10 +39,8 @@ cp .env.example .env
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `OPENAI_API_KEY` | AI model API key | Yes |
-| `OPENAI_BASE_URL` | OpenAI-compatible API base URL | Yes |
-| `OPENAI_MODEL_NAME` | Model name with image input support | Yes |
 | `WEB_USERNAME` / `WEB_PASSWORD` | Web UI login credentials, default `admin/admin123` | No |
+| Notification channel | Configure at least one channel in `.env` or Web Settings | Yes |
 
 See "Configuration" below for the rest.
 
@@ -65,11 +60,9 @@ chmod +x start.sh
 3. Login-state files are stored in `state/`, for example `state/acc_1.json`.
 4. Go back to "Task Management", create a task, bind an account if needed, and run it.
 
-### Create Your First Task
+### Create Your First Monitor
 
-- `AI mode`: fill in the requirement description. Submission opens a separate progress dialog while the criteria are generated asynchronously.
-- `Keyword mode`: provide keyword rules and the task is created immediately.
-- `Region filter`: now uses a province / city / district selector backed by an embedded Xianyu page snapshot instead of manual text input.
+In Task Management, set a task name, search keyword, desired filters, account, and Cron schedule. Select `Latest` in the new-publish filter to prioritize newest listings; leave it empty to skip that time filter. Matching items are persisted and notified the first time the task discovers them. The first complete scan creates a baseline and does not notify items already in the results.
 
 ## 🐳 Docker Deployment (Recommended)
 
@@ -111,9 +104,9 @@ docker compose down
 
 ### Task Management
 
-- Supports AI creation, keyword rules, price range, new listing filters, region filters, account binding, and cron scheduling.
-- AI task creation runs as a background job and shows a dedicated progress dialog after submission.
-- Region filtering can greatly reduce results, so leaving it empty is the safer default.
+- Configure search keywords, price, latest-publish range, region, personal listings, free shipping, account binding, page depth, and cron schedule.
+- Every first-discovered item matching the configured Xianyu search filters is queued for notification; no recommendation or keyword-rule stage is applied.
+- Region filtering narrows the search, so leave it blank when you want broader coverage.
 
 ### Account Management
 
@@ -123,11 +116,11 @@ docker compose down
 ### Results and Logs
 
 - The results page and export endpoints now query SQLite instead of directly scanning `jsonl` files.
-- The logs page is the first place to inspect login-state expiry, anti-bot issues, or AI call failures.
+- The logs page is the first place to inspect login-state expiry, anti-bot issues, or notification delivery failures.
 
 ### System Settings
 
-- View system status, edit prompts, and adjust proxy / rotation-related settings.
+- View system status, configure notification channels, and adjust account / proxy rotation settings.
 
 </details>
 
@@ -162,28 +155,13 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest
 cd web-ui && npm run build
 ```
 
-### Task Creation API
-
-<details>
-<summary>Click to expand API behavior</summary>
-
-- `POST /api/tasks/generate`
-  - `decision_mode=ai`: returns `202` with a `job`; the client should poll for progress.
-  - `decision_mode=keyword`: returns the created task directly.
-- `GET /api/tasks/generate-jobs/{job_id}`: fetch AI task-generation progress.
-- `POST /auth/status`: validate Web UI credentials.
-
-</details>
-
 ## Configuration
 
 <details>
 <summary>Click to expand common configuration items</summary>
 
-### AI and Runtime
+### Runtime
 
-- `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL_NAME`: required AI model settings.
-- `PROXY_URL`: dedicated HTTP/SOCKS5 proxy for AI requests.
 - `RUN_HEADLESS`: whether the scraper runs headless; keep it `true` in Docker.
 - `SERVER_PORT`: backend port, default `8000`.
 - `LOGIN_IS_EDGE`: use Edge instead of Chrome locally; Docker images do not bundle Edge and always run with Chromium.
@@ -226,26 +204,22 @@ See `.env.example` for the full list.
 
 ## 🚀 Workflow
 
-The diagram below shows the core processing flow of a monitoring task. The main service runs in `src.app` and launches one or more task processes based on user actions or schedule triggers.
+The FastAPI app starts enabled Cron jobs. Each job searches Xianyu with its configured filters, persists first-seen item keys in SQLite, and delivers queued notifications.
 
 ```mermaid
 graph TD
-    A[Start Monitoring Task] --> B[Select Account/Proxy Configuration];
-    B --> C[Task: Search Products];
-    C --> D{Found New Products?};
-    D -- Yes --> E[Scrape Product Details & Seller Info];
-    E --> F[Download Product Images];
-    F --> G[Call AI for Analysis];
-    G --> H{AI Recommended?};
-    H -- Yes --> I[Send Notification];
-    H -- No --> J[Save Record to SQLite];
-    I --> J;
-    D -- No --> K[Next Page/Wait];
-    K --> C;
-    J --> C;
-    C --> L{Risk Control/Exception?};
-    L -- Yes --> M[Account/Proxy Rotation and Retry];
-    M --> C;
+    A[Scheduled task] --> B[Load task filters and login state];
+    B --> C[Search latest listings];
+    C --> D[Parse and deduplicate per task];
+    D --> E{First complete scan?};
+    E -- Yes --> F[Save baseline without notifying];
+    E -- No --> G[Persist newly discovered item];
+    G --> H[Send to configured notification channels];
+    H --> I{Any channel succeeds?};
+    I -- Yes --> J[Mark sent; do not repeat];
+    I -- No --> K[Keep pending for retry];
+    C --> L{Login, risk-control, or scan error?};
+    L -- Yes --> M[Failure guard and account/proxy rotation];
 ```
 
 ## FAQ
@@ -253,9 +227,9 @@ graph TD
 <details>
 <summary>Click to expand FAQ</summary>
 
-### Why does AI task creation take time?
+### Why are there no notifications on the first run?
 
-In AI mode, the system generates analysis criteria before the task itself is created. This now runs as a background job with a separate progress dialog instead of blocking the task form.
+The first complete scan records the current listings as a baseline and does not notify for items already present. Later scans notify items first discovered by that task. An incomplete scan does not finalize the baseline.
 
 ### Why is the region filter optional by default?
 

@@ -250,8 +250,10 @@ const enUSExtra = {
     },
     webhook: {
       title: 'Generic Webhook',
-      description: 'Supports JSON template variables. URL and headers are treated as sensitive and are not echoed back.',
+      description: 'Supports JSON template variables. The URL, headers, and DingTalk signing secret are treated as sensitive and are not echoed back.',
       urlLabel: 'Webhook URL',
+      secretLabel: 'DingTalk Signing Secret (optional)',
+      secretConfiguredHint: 'A signing secret is stored and hidden on this page.',
       headersLabel: 'Webhook Headers (JSON)',
       headersPlaceholder: 'Leave blank to keep current value, e.g. ',
       methodLabel: 'Webhook Method',

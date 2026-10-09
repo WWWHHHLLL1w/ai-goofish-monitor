@@ -10,6 +10,7 @@ export interface NotificationSettings {
   TELEGRAM_CHAT_ID?: string
   TELEGRAM_API_BASE_URL?: string
   WEBHOOK_URL?: string
+  WEBHOOK_SECRET?: string
   WEBHOOK_METHOD?: string
   WEBHOOK_HEADERS?: string
   WEBHOOK_CONTENT_TYPE?: string
@@ -21,6 +22,7 @@ export interface NotificationSettings {
   WX_BOT_URL_SET?: boolean
   TELEGRAM_BOT_TOKEN_SET?: boolean
   WEBHOOK_URL_SET?: boolean
+  WEBHOOK_SECRET_SET?: boolean
   WEBHOOK_HEADERS_SET?: boolean
   CONFIGURED_CHANNELS?: string[]
 }
@@ -35,6 +37,7 @@ export interface NotificationSettingsUpdate {
   TELEGRAM_CHAT_ID?: string | null
   TELEGRAM_API_BASE_URL?: string | null
   WEBHOOK_URL?: string | null
+  WEBHOOK_SECRET?: string | null
   WEBHOOK_METHOD?: string | null
   WEBHOOK_HEADERS?: string | null
   WEBHOOK_CONTENT_TYPE?: string | null
@@ -50,13 +53,6 @@ export interface NotificationTestResponse {
     success: boolean
     message: string
   }>
-}
-
-export interface AiSettings {
-  OPENAI_API_KEY?: string
-  OPENAI_BASE_URL?: string
-  OPENAI_MODEL_NAME?: string
-  PROXY_URL?: string
 }
 
 export interface RotationSettings {
@@ -75,7 +71,6 @@ export interface RotationSettings {
 export interface SystemStatus {
   scraper_running: boolean
   running_task_ids?: number[]
-  ai_configured?: boolean
   notification_configured?: boolean
   headless_mode?: boolean
   running_in_docker?: boolean
@@ -85,9 +80,6 @@ export interface SystemStatus {
   }
   env_file: {
     exists: boolean
-    openai_api_key_set: boolean
-    openai_base_url_set: boolean
-    openai_model_name_set: boolean
     ntfy_topic_url_set: boolean
     gotify_url_set: boolean
     gotify_token_set: boolean
@@ -96,6 +88,7 @@ export interface SystemStatus {
     telegram_bot_token_set: boolean
     telegram_chat_id_set: boolean
     webhook_url_set: boolean
+    webhook_secret_set: boolean
     webhook_headers_set: boolean
   }
   configured_notification_channels?: string[]
@@ -123,18 +116,6 @@ export async function testNotificationSettings(
   })
 }
 
-export async function getAiSettings(): Promise<AiSettings> {
-  return await http('/api/settings/ai')
-}
-
-export async function updateAiSettings(settings: AiSettings): Promise<void> {
-  await http('/api/settings/ai', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings)
-  })
-}
-
 export async function getRotationSettings(): Promise<RotationSettings> {
   return await http('/api/settings/rotation')
 }
@@ -142,14 +123,6 @@ export async function getRotationSettings(): Promise<RotationSettings> {
 export async function updateRotationSettings(settings: RotationSettings): Promise<void> {
   await http('/api/settings/rotation', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings)
-  })
-}
-
-export async function testAiSettings(settings: AiSettings): Promise<{ success: boolean; message: string; response?: string }> {
-  return await http('/api/settings/ai/test', {
-    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings)
   })

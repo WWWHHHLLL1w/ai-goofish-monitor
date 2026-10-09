@@ -30,6 +30,7 @@ def build_notification_clients(settings: NotificationSettings):
         ),
         WebhookClient(
             settings.webhook_url,
+            webhook_secret=settings.webhook_secret,
             webhook_method=settings.webhook_method,
             webhook_headers=settings.webhook_headers,
             webhook_content_type=settings.webhook_content_type,

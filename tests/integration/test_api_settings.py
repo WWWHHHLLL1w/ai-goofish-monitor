@@ -17,11 +17,6 @@ _SETTINGS_ENV_KEYS = [
     "PROXY_POOL",
     "PROXY_ROTATION_RETRY_LIMIT",
     "PROXY_BLACKLIST_TTL",
-    "OPENAI_API_KEY",
-    "OPENAI_BASE_URL",
-    "OPENAI_MODEL_NAME",
-    "SKIP_AI_ANALYSIS",
-    "PROXY_URL",
     "NTFY_TOPIC_URL",
     "GOTIFY_URL",
     "GOTIFY_TOKEN",
@@ -31,6 +26,7 @@ _SETTINGS_ENV_KEYS = [
     "TELEGRAM_CHAT_ID",
     "TELEGRAM_API_BASE_URL",
     "WEBHOOK_URL",
+    "WEBHOOK_SECRET",
     "WEBHOOK_METHOD",
     "WEBHOOK_HEADERS",
     "WEBHOOK_CONTENT_TYPE",
@@ -122,6 +118,7 @@ def test_notification_settings_redact_sensitive_values_and_expose_flags(tmp_path
                 "TELEGRAM_CHAT_ID=123456",
                 "TELEGRAM_API_BASE_URL=https://tg.example.com/proxy",
                 "WEBHOOK_URL=https://hooks.example.com/notify?token=secret",
+                "WEBHOOK_SECRET=ding-secret",
                 'WEBHOOK_HEADERS={"Authorization":"Bearer secret"}',
                 'WEBHOOK_BODY={"message":"{{content}}"}',
             ]
@@ -144,14 +141,41 @@ def test_notification_settings_redact_sensitive_values_and_expose_flags(tmp_path
     assert payload["GOTIFY_TOKEN"] == ""
     assert payload["TELEGRAM_BOT_TOKEN"] == ""
     assert payload["WEBHOOK_URL"] == ""
+    assert payload["WEBHOOK_SECRET"] == ""
     assert payload["WEBHOOK_HEADERS"] == ""
     assert payload["BARK_URL_SET"] is True
     assert payload["WX_BOT_URL_SET"] is True
     assert payload["GOTIFY_TOKEN_SET"] is True
     assert payload["TELEGRAM_BOT_TOKEN_SET"] is True
     assert payload["WEBHOOK_URL_SET"] is True
+    assert payload["WEBHOOK_SECRET_SET"] is True
     assert payload["WEBHOOK_HEADERS_SET"] is True
     assert payload["WEBHOOK_BODY"] == '{"message":"{{content}}"}'
+
+
+def test_webhook_secret_can_be_saved_without_echoing(tmp_path, monkeypatch):
+    _clear_settings_env(monkeypatch)
+    env_file = tmp_path / ".env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(env_manager, "env_file", env_file)
+    client = _build_settings_client()
+
+    response = client.put(
+        "/api/settings/notifications",
+        json={
+            "WEBHOOK_URL": "https://oapi.dingtalk.com/robot/send",
+            "WEBHOOK_SECRET": "ding-secret",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "WEBHOOK_SECRET=ding-secret" in env_file.read_text(encoding="utf-8")
+
+    settings_response = client.get("/api/settings/notifications")
+    assert settings_response.status_code == 200
+    payload = settings_response.json()
+    assert payload["WEBHOOK_SECRET"] == ""
+    assert payload["WEBHOOK_SECRET_SET"] is True
 
 
 def test_update_notification_settings_rejects_invalid_channel_config(tmp_path, monkeypatch):
@@ -321,32 +345,18 @@ def test_notification_test_endpoint_ignores_other_channel_dirty_fields(tmp_path,
     assert captured[0]["url"] == "https://ntfy.sh/demo-topic"
 
 
-def test_ai_settings_fall_back_to_runtime_environment_when_env_file_missing(tmp_path, monkeypatch):
+def test_ai_configuration_endpoints_are_removed(tmp_path, monkeypatch):
     _clear_settings_env(monkeypatch)
     env_file = tmp_path / ".env"
     monkeypatch.setattr(env_manager, "env_file", env_file)
-    monkeypatch.setenv("OPENAI_API_KEY", "runtime-key")
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://runtime.example.com/v1")
-    monkeypatch.setenv("OPENAI_MODEL_NAME", "runtime-model")
-    monkeypatch.setenv("PROXY_URL", "http://127.0.0.1:7890")
     client = _build_settings_client()
 
-    ai_response = client.get("/api/settings/ai")
-    assert ai_response.status_code == 200
-    assert ai_response.json() == {
-        "OPENAI_BASE_URL": "https://runtime.example.com/v1",
-        "OPENAI_MODEL_NAME": "runtime-model",
-        "SKIP_AI_ANALYSIS": False,
-        "PROXY_URL": "http://127.0.0.1:7890",
-    }
-
+    assert client.get("/api/settings/ai").status_code == 404
+    assert client.post("/api/settings/ai/test", json={}).status_code == 404
     status_response = client.get("/api/settings/status")
     assert status_response.status_code == 200
-    env_payload = status_response.json()["env_file"]
-    assert env_payload["exists"] is False
-    assert env_payload["openai_api_key_set"] is True
-    assert env_payload["openai_base_url_set"] is True
-    assert env_payload["openai_model_name_set"] is True
+    assert "ai_configured" not in status_response.json()
+    assert "openai_api_key_set" not in status_response.json()["env_file"]
 
 
 def test_notification_settings_fall_back_to_runtime_environment_when_env_file_missing(
@@ -375,65 +385,13 @@ def test_notification_settings_fall_back_to_runtime_environment_when_env_file_mi
     assert sorted(payload["CONFIGURED_CHANNELS"]) == ["bark", "ntfy", "telegram"]
 
 
-def test_ai_test_endpoint_falls_back_to_responses_when_chat_completions_api_404(
-    tmp_path, monkeypatch
-):
+def test_ai_test_endpoint_is_removed(tmp_path, monkeypatch):
     _clear_settings_env(monkeypatch)
     env_file = tmp_path / ".env"
     env_file.write_text("", encoding="utf-8")
     monkeypatch.setattr(env_manager, "env_file", env_file)
     client = _build_settings_client()
-    request_history = []
 
-    class _FakeOpenAI:
-        def __init__(self, **_kwargs):
-            self.responses = type(
-                "_Responses",
-                (),
-                {"create": self._responses_create},
-            )()
-            self.chat = type(
-                "_Chat",
-                (),
-                {
-                    "completions": type(
-                        "_Completions",
-                        (),
-                        {"create": self._chat_create},
-                    )()
-                },
-            )()
+    response = client.post("/api/settings/ai/test", json={})
 
-        def _responses_create(self, **kwargs):
-            request_history.append(("responses", kwargs))
-            return type(
-                "_Response",
-                (),
-                {"output_text": "OK"},
-            )()
-
-        def _chat_create(self, **kwargs):
-            request_history.append(("chat", kwargs))
-            raise Exception("Error code: 404 - page not found")
-
-    import openai
-
-    monkeypatch.setattr(openai, "OpenAI", _FakeOpenAI)
-
-    response = client.post(
-        "/api/settings/ai/test",
-        json={
-            "OPENAI_API_KEY": "demo",
-            "OPENAI_BASE_URL": "https://example.com/v1/",
-            "OPENAI_MODEL_NAME": "demo-model",
-        },
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["success"] is True
-    assert payload["response"] == "OK"
-    assert request_history[0][0] == "chat"
-    assert request_history[0][1]["messages"][0]["content"] == settings.AI_TEST_PROMPT
-    assert request_history[1][0] == "responses"
-    assert request_history[1][1]["input"][0]["content"][0]["text"] == settings.AI_TEST_PROMPT
+    assert response.status_code == 404

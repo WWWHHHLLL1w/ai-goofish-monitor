@@ -1,29 +1,17 @@
-import type {
-  Task,
-  TaskCreateResponse,
-  TaskGenerateRequest,
-  TaskGenerationJob,
-  TaskUpdate,
-} from '@/types/task.d.ts'
+import type { Task, TaskCreate, TaskUpdate } from '@/types/task.d.ts'
 import { http } from '@/lib/http'
 
 export async function getAllTasks(): Promise<Task[]> {
   return await http('/api/tasks')
 }
 
-export async function createTaskWithAI(data: TaskGenerateRequest): Promise<TaskCreateResponse> {
-  return await http('/api/tasks/generate', {
+export async function createTask(data: TaskCreate): Promise<Task> {
+  const result = await http('/api/tasks/', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
-}
-
-export async function getTaskGenerationJob(jobId: string): Promise<TaskGenerationJob> {
-  const result = await http(`/api/tasks/generate-jobs/${jobId}`)
-  return result.job
+  return result.task
 }
 
 export async function updateTask(taskId: number, data: TaskUpdate): Promise<Task> {

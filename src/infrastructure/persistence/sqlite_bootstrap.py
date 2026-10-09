@@ -35,9 +35,20 @@ def bootstrap_sqlite_storage(
     with BOOTSTRAP_LOCK:
         with sqlite_connection(db_path) as conn:
             init_schema(conn)
+            _initialize_task_id_sequence(conn)
             _import_tasks_if_needed(conn, legacy_config_file)
             _import_results_if_needed(conn, legacy_result_dir)
             _import_price_snapshots_if_needed(conn, legacy_price_history_dir)
+
+
+def _initialize_task_id_sequence(conn) -> None:
+    row = conn.execute("SELECT COALESCE(MAX(id), -1) AS max_id FROM tasks").fetchone()
+    if row is not None and int(row["max_id"]) >= 0:
+        conn.execute(
+            "INSERT OR IGNORE INTO task_id_sequence (id) VALUES (?)",
+            (int(row["max_id"]),),
+        )
+        conn.commit()
 
 
 def _table_is_empty(conn, table_name: str) -> bool:
@@ -91,21 +102,22 @@ def _import_tasks_if_needed(conn, legacy_config_file: str | None) -> None:
                 _as_int(raw_task.get("enabled", True)),
                 raw_task.get("keyword", ""),
                 raw_task.get("description", ""),
-                _as_int(raw_task.get("analyze_images", True)),
+                _as_int(raw_task.get("analyze_images", False)),
+
                 int(raw_task.get("max_pages", 1) or 1),
                 _as_int(raw_task.get("personal_only", False)),
                 raw_task.get("min_price"),
                 raw_task.get("max_price"),
                 raw_task.get("cron"),
-                raw_task.get("ai_prompt_base_file", "prompts/base_prompt.txt"),
+                raw_task.get("ai_prompt_base_file", ""),
                 raw_task.get("ai_prompt_criteria_file", ""),
                 raw_task.get("account_state_file"),
                 raw_task.get("account_strategy", "auto"),
                 _as_int(raw_task.get("free_shipping", True)),
                 raw_task.get("new_publish_option"),
                 raw_task.get("region"),
-                raw_task.get("decision_mode", "ai"),
-                json.dumps(raw_task.get("keyword_rules") or [], ensure_ascii=False),
+                "notify",
+                "[]",
                 _as_int(raw_task.get("is_running", False)),
             ),
         )

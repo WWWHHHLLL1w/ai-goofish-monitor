@@ -250,8 +250,10 @@ const zhCNExtra = {
     },
     webhook: {
       title: '通用 Webhook',
-      description: '支持 JSON 模板变量；URL 和 Headers 作为敏感字段不回显。',
+      description: '支持 JSON 模板变量；URL、Headers 和钉钉加签密钥作为敏感字段不回显。',
       urlLabel: 'Webhook URL',
+      secretLabel: '钉钉加签密钥（可选）',
+      secretConfiguredHint: '已保存加签密钥，当前页面不回显。',
       headersLabel: 'Webhook Headers (JSON)',
       headersPlaceholder: '已配置则留空保留，例如：',
       methodLabel: 'Webhook 方法',
